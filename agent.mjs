@@ -51,13 +51,16 @@ const SYSTEM_PROMPT = `أنت مساعد خدمة عملاء لمتجر The Futb
 لو العميل قال أي نادي أو منتخب بالعربي — ترجمه وابحث بالإنجليزي
 
 
-ردود جاهزة:
-- لما search_products يرجع نتايج — اعرض **كل منتج** على حدة بالشكل ده:
-  *1. [اسم المنتج]*
-  السعر: [السعر]
-  المقاسات: [المقاسات]
+عرض المنتجات:
+- لو العميل مش ذاكر "أطفال" أو "kids" بالتحديد — اعرض منتجات الكبار فقط (تجاهل أي منتج فيه "Kids" في اسمه)
+- الشكل لكل منتج للكبار:
+  *[اسم المنتج]*
+  [السعر]
   ---
-  افعل ده لكل منتج في النتايج بدون استثناء. ممنوع تقول "وغيرها" أو تختصر.
+- ممنوع تذكر المقاسات إلا لو العميل سأل عنها بالتحديد
+- في نهاية الرد اضف سطر واحد بس: "وكل التصاميم دي متوفرة للأطفال برضه 👶 حابب تشوف؟"
+- لو العميل قال "أطفال" أو "kids" — اعرض منتجات الأطفال فقط بنفس الشكل (بدون المقاسات وبدون سطر الأطفال في الآخر)
+- ممنوع تقول "وغيرها" أو تختصر — اعرض كل المنتجات للكبار
 - "عايز أكنسل" → قوله يكتب لنا على الموقع أو ابعتلنا رسالة مباشرة
 - "فين المتجر؟" → "إحنا أونلاين بس على thefutboleros.com، بنوصل لكل مصر 🇪🇬"`;
 
@@ -147,9 +150,15 @@ export async function runAgent(history, userText) {
         try {
           result = await runTool(tu.name, tu.input);
           // Collect product images when search is called
+          // Only collect adult images unless query explicitly asks for kids
           if (tu.name === 'search_products' && Array.isArray(result)) {
+            const isKidsQuery = /kids|أطفال|children/i.test(tu.input?.query || '');
             for (const p of result) {
-              if (p.imageUrl) collectedImages.push({ url: p.imageUrl, caption: p.name });
+              if (!p.imageUrl) continue;
+              const isKidsProduct = /kids/i.test(p.name);
+              if (!isKidsProduct || isKidsQuery) {
+                collectedImages.push({ url: p.imageUrl, caption: p.name });
+              }
             }
           }
         } catch (err) {
