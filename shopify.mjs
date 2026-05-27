@@ -42,9 +42,8 @@ const DELIVERY_AR = {
 function normalizeOrderNumber(input) {
   if (!input) return null;
   const s = input.trim().replace(/^#+/, '').toUpperCase().replace(/\s/g, '');
-  // Handle "FTB1234" or just "1234"
-  if (/^\d+$/.test(s)) return `#FTB${s}`;
-  if (/^FTB\d+$/i.test(s)) return `#${s.toUpperCase()}`;
+  if (/^FTB\d+$/i.test(s)) return `#${s.toUpperCase()}`; // #FTB1234
+  if (/^\d+$/.test(s)) return `#${s}`;                   // #3121008 as-is
   return `#${s}`;
 }
 
