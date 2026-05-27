@@ -70,9 +70,9 @@ export async function lookupOrder({ order_number, phone }) {
   }
 
   const data = await gql(`{
-    orders(first: 5, query: "${searchQuery} AND NOT financial_status:voided") {
+    orders(first: 10, query: "${searchQuery} AND NOT financial_status:voided") {
       edges { node {
-        name createdAt tags
+        name createdAt tags phone
         displayFinancialStatus displayFulfillmentStatus
         totalPriceSet { shopMoney { amount currencyCode } }
         fulfillments {
@@ -82,12 +82,27 @@ export async function lookupOrder({ order_number, phone }) {
         lineItems(first: 10) {
           edges { node { title variantTitle quantity } }
         }
-        shippingAddress { firstName lastName city }
+        shippingAddress { firstName lastName city phone }
+        customer { phone }
       }}
     }
   }`);
 
-  const orders = data?.orders?.edges?.map(e => e.node) || [];
+  let orders = data?.orders?.edges?.map(e => e.node) || [];
+
+  // Filter to only orders where phone actually matches
+  if (phone) {
+    const p = normalizePhone(phone);
+    const digits = p.replace(/\D/g, '').slice(-10); // last 10 digits
+    orders = orders.filter(o => {
+      const phones = [
+        o.phone,
+        o.shippingAddress?.phone,
+        o.customer?.phone,
+      ].filter(Boolean).map(x => x.replace(/\D/g, '').slice(-10));
+      return phones.some(x => x === digits);
+    });
+  }
   if (orders.length === 0) {
     return {
       found: false,
