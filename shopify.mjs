@@ -64,7 +64,12 @@ export async function lookupOrder({ order_number, phone }) {
     searchQuery = `name:${name}`;
   } else if (phone) {
     const p = normalizePhone(phone);
-    searchQuery = `phone:${p} OR shipping_address_phone:${p}`;
+    // Also search local Egyptian format (01XXXXXXXXX) in case Shopify stored it that way
+    const local = p.startsWith('+20') ? '0' + p.slice(3) : null;
+    let phoneQ = `phone:${p} OR shipping_address_phone:${p}`;
+    if (local) phoneQ += ` OR phone:${local} OR shipping_address_phone:${local}`;
+    // Wrap in parens so AND NOT financial_status:voided applies to the whole OR block
+    searchQuery = `(${phoneQ})`;
   } else {
     return { error: 'من فضلك أرسل رقم الأوردر أو رقم التليفون' };
   }
@@ -90,17 +95,23 @@ export async function lookupOrder({ order_number, phone }) {
 
   let orders = data?.orders?.edges?.map(e => e.node) || [];
 
-  // Filter to only orders where phone actually matches
+  // Filter to only orders where phone actually matches (prevents Shopify returning unrelated orders)
   if (phone) {
     const p = normalizePhone(phone);
-    const digits = p.replace(/\D/g, '').slice(-10); // last 10 digits
+    const digits10 = p.replace(/\D/g, '').slice(-10); // last 10 digits to compare
+    const digits11 = p.replace(/\D/g, '').slice(-11); // last 11 digits (covers 201XXXXXXXXX)
+    console.log('📞 Looking for phone digits:', digits10, '|', digits11);
     orders = orders.filter(o => {
       const phones = [
         o.phone,
         o.shippingAddress?.phone,
         o.customer?.phone,
-      ].filter(Boolean).map(x => x.replace(/\D/g, '').slice(-10));
-      return phones.some(x => x === digits);
+      ].filter(Boolean);
+      console.log('📋 Order', o.name, 'phones:', phones);
+      return phones.some(x => {
+        const d = x.replace(/\D/g, '');
+        return d.slice(-10) === digits10 || d.slice(-11) === digits11;
+      });
     });
   }
   if (orders.length === 0) {
