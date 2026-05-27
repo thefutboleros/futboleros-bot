@@ -122,6 +122,7 @@ export async function lookupOrder({ order_number, phone }) {
 }
 
 export async function searchProducts({ query }) {
+  console.log('🔍 Searching Shopify for:', query);
   const data = await gql(`{
     products(first: 8, query: "${query.replace(/"/g, '')}") {
       edges { node {
@@ -135,6 +136,7 @@ export async function searchProducts({ query }) {
   }`);
 
   const products = data?.products?.edges?.map(e => e.node) || [];
+  console.log('📦 Shopify returned', products.length, 'products:', products.map(p => p.title));
   if (products.length === 0) return { found: false, message: 'مش لاقي منتجات بالبحث ده' };
 
   return products
