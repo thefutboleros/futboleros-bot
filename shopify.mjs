@@ -149,7 +149,7 @@ export async function lookupOrder({ order_number, phone }) {
 export async function searchProducts({ query }) {
   console.log('🔍 Searching Shopify for:', query);
   const data = await gql(`{
-    products(first: 8, query: "${query.replace(/"/g, '')}") {
+    products(first: 20, query: "${query.replace(/"/g, '')}") {
       edges { node {
         title status
         featuredImage { url }
