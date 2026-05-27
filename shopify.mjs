@@ -126,6 +126,7 @@ export async function searchProducts({ query }) {
     products(first: 8, query: "${query.replace(/"/g, '')}") {
       edges { node {
         title status
+        featuredImage { url }
         variants(first: 30) {
           edges { node { title availableForSale price } }
         }
@@ -149,6 +150,7 @@ export async function searchProducts({ query }) {
         available: available.length > 0,
         sizes:     available.length > 0 ? available.join(', ') : 'نفذ من المخزون',
         price:     priceStr,
+        imageUrl:  p.featuredImage?.url || null,
       };
     });
 }

@@ -27,6 +27,29 @@ export async function sendWhatsApp(to, text) {
   }
 }
 
+export async function sendWhatsAppImage(to, imageUrl, caption = '') {
+  const res = await fetch(
+    `https://graph.facebook.com/v19.0/${WA_PHONE_ID}/messages`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${WA_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to,
+        type: 'image',
+        image: { link: imageUrl, caption },
+      }),
+    }
+  );
+  if (!res.ok) {
+    const err = await res.text();
+    console.error('WhatsApp image send error:', err);
+  }
+}
+
 // ── Facebook Messenger & Instagram DM (same Graph endpoint) ──────────────────
 
 export async function sendMessenger(recipientId, text, token = FB_TOKEN) {

@@ -82,10 +82,12 @@ export async function runAgent(history, userText) {
     { role: 'user', content: userText },
   ];
 
+  const collectedImages = []; // product images to send after text reply
+
   // Agentic loop — max 5 iterations to avoid runaway calls
   for (let i = 0; i < 5; i++) {
     const response = await client.messages.create({
-      model:      'claude-opus-4-5',
+      model:      'claude-sonnet-4-5',
       max_tokens: 1024,
       system:     SYSTEM_PROMPT,
       tools:      TOOLS,
@@ -93,12 +95,15 @@ export async function runAgent(history, userText) {
     });
 
     // Collect any text content emitted so far
-    const textBlocks  = response.content.filter(b => b.type === 'text');
+    const textBlocks    = response.content.filter(b => b.type === 'text');
     const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
 
     // If no tool calls → we're done
     if (response.stop_reason === 'end_turn' || toolUseBlocks.length === 0) {
-      return textBlocks.map(b => b.text).join('').trim();
+      return {
+        reply:  textBlocks.map(b => b.text).join('').trim(),
+        images: collectedImages,
+      };
     }
 
     // Push the assistant turn (with tool_use blocks)
@@ -110,6 +115,12 @@ export async function runAgent(history, userText) {
         let result;
         try {
           result = await runTool(tu.name, tu.input);
+          // Collect product images when search is called
+          if (tu.name === 'search_products' && Array.isArray(result)) {
+            for (const p of result) {
+              if (p.imageUrl) collectedImages.push({ url: p.imageUrl, caption: p.name });
+            }
+          }
         } catch (err) {
           result = { error: String(err) };
         }
@@ -125,5 +136,5 @@ export async function runAgent(history, userText) {
   }
 
   // Fallback if we hit the iteration cap
-  return 'معلش، حصل خطأ. حاول تاني أو تواصل معنا مباشرة.';
+  return { reply: 'معلش، حصل خطأ. حاول تاني أو تواصل معنا مباشرة.', images: [] };
 }

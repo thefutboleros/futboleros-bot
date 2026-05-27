@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
-import { parseWebhook, sendWhatsApp, sendMessenger } from './meta.mjs';
+import { parseWebhook, sendWhatsApp, sendWhatsAppImage, sendMessenger } from './meta.mjs';
 import { runAgent }                                   from './agent.mjs';
 import { loadHistory, saveHistory, isProcessed, markProcessed } from './memory.mjs';
 
@@ -39,7 +39,7 @@ app.post('/webhook', async (req, res) => {
 
     try {
       const history = loadHistory(senderId);
-      const reply   = await runAgent(history, text);
+      const { reply, images } = await runAgent(history, text);
 
       // Persist updated history (user + assistant turns)
       saveHistory(senderId, [
@@ -51,8 +51,11 @@ app.post('/webhook', async (req, res) => {
       // Send reply back on the right channel
       if (channel === 'whatsapp') {
         await sendWhatsApp(senderId, reply);
+        // Send product images one by one
+        for (const { url, caption } of images) {
+          await sendWhatsAppImage(senderId, url, caption);
+        }
       } else {
-        // messenger or instagram — both use the same Graph endpoint
         await sendMessenger(senderId, reply);
       }
     } catch (err) {
