@@ -70,6 +70,24 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
+// ── Shopify OAuth callback (temporary — to capture access token) ──────────────
+app.get('/shopify/callback', async (req, res) => {
+  const { code, shop } = req.query;
+  if (!code || !shop) return res.send('Missing code or shop');
+
+  const clientId     = process.env.SHOPIFY_CLIENT_ID;
+  const clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
+
+  const r = await fetch(`https://${shop}/admin/oauth/access_token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code }),
+  });
+  const data = await r.json();
+  console.log('🔑 SHOPIFY ACCESS TOKEN:', data.access_token);
+  res.send(`Token logged in Railway. access_token: ${data.access_token}`);
+});
+
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
