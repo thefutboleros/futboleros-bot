@@ -37,6 +37,13 @@ app.post('/webhook', async (req, res) => {
 
     console.log(`[${channel}] ${senderId}: ${text}`);
 
+    // Ignore order confirmation replies — handled by separate system
+    const confirmationReplies = /^(تأكيد|إلغاء|الغاء|نعم|لأ|لا|اه|آه|أه|ok|yes|no|confirm|cancel|1|2)$/i;
+    if (confirmationReplies.test(text.trim())) {
+      console.log('⏭️ Skipping confirmation reply');
+      continue;
+    }
+
     try {
       const history = loadHistory(senderId);
       const { reply, images } = await runAgent(history, text);
