@@ -56,64 +56,120 @@ function normalizePhone(phone) {
   return p;
 }
 
-export async function lookupOrder({ order_number, phone }) {
-  let searchQuery;
+// Shared GraphQL fields for an order node
+const ORDER_NODE_FIELDS = `
+  name createdAt tags phone
+  displayFinancialStatus displayFulfillmentStatus
+  totalPriceSet { shopMoney { amount currencyCode } }
+  fulfillments {
+    displayStatus
+    trackingInfo { number url }
+  }
+  lineItems(first: 10) {
+    edges { node { title variantTitle quantity } }
+  }
+  shippingAddress { firstName lastName city phone }
+  customer { phone }
+`;
 
+function formatOrderNode(o) {
+  const fulfillment = o.fulfillments?.[0];
+  const tracking    = fulfillment?.trackingInfo?.[0]?.number;
+  const delivStatus = fulfillment?.displayStatus;
+  const isConfirmed = o.tags?.includes('تم تأكيد الطلب');
+  return {
+    found: true,
+    order:          o.name,
+    date:           new Date(o.createdAt).toLocaleDateString('ar-EG', { year:'numeric', month:'long', day:'numeric' }),
+    total:          `${parseFloat(o.totalPriceSet.shopMoney.amount).toFixed(0)} جنيه`,
+    confirmed:      isConfirmed ? 'تم تأكيده ✅' : 'لم يتم تأكيده بعد ⏳',
+    paymentStatus:  FINANCIAL_AR[o.displayFinancialStatus] || o.displayFinancialStatus,
+    fulfillStatus:  FULFILLMENT_AR[o.displayFulfillmentStatus] || o.displayFulfillmentStatus,
+    deliveryStatus: delivStatus ? (DELIVERY_AR[delivStatus] || delivStatus) : null,
+    trackingNumber: tracking || null,
+    city:           o.shippingAddress?.city || null,
+    customer:       o.shippingAddress ? `${o.shippingAddress.firstName} ${o.shippingAddress.lastName}`.trim() : null,
+    items:          o.lineItems.edges.map(e =>
+      `• ${e.node.title}${e.node.variantTitle ? ' - ' + e.node.variantTitle : ''} (${e.node.quantity} قطعة)`
+    ),
+  };
+}
+
+export async function lookupOrder({ order_number, phone }) {
+
+  // ── Order-number lookup ──────────────────────────────────────────────────────
   if (order_number) {
     const name = normalizeOrderNumber(order_number);
-    searchQuery = `name:${name}`;
-  } else if (phone) {
-    const p = normalizePhone(phone);
-    // Also search local Egyptian format (01XXXXXXXXX) in case Shopify stored it that way
-    const local = p.startsWith('+20') ? '0' + p.slice(3) : null;
-    let phoneQ = `phone:${p} OR shipping_address_phone:${p}`;
-    if (local) phoneQ += ` OR phone:${local} OR shipping_address_phone:${local}`;
-    // Wrap in parens so AND NOT financial_status:voided applies to the whole OR block
-    searchQuery = `(${phoneQ})`;
-  } else {
-    return { error: 'من فضلك أرسل رقم الأوردر أو رقم التليفون' };
+    const data = await gql(`{
+      orders(first: 5, query: "name:${name}") {
+        edges { node { ${ORDER_NODE_FIELDS} } }
+      }
+    }`);
+    let orders = (data?.orders?.edges || []).map(e => e.node)
+      .filter(o => o.displayFinancialStatus !== 'VOIDED');
+    if (orders.length === 0) return { found: false, message: 'مش لاقي أوردر بالرقم ده. تأكد من رقم الأوردر.' };
+    return orders.map(formatOrderNode);
   }
 
-  const data = await gql(`{
-    orders(first: 10, query: "${searchQuery} AND NOT financial_status:voided") {
-      edges { node {
-        name createdAt tags phone
-        displayFinancialStatus displayFulfillmentStatus
-        totalPriceSet { shopMoney { amount currencyCode } }
-        fulfillments {
-          displayStatus
-          trackingInfo { number url }
-        }
-        lineItems(first: 10) {
-          edges { node { title variantTitle quantity } }
-        }
-        shippingAddress { firstName lastName city phone }
-        customer { phone }
-      }}
-    }
-  }`);
+  // ── Phone lookup ─────────────────────────────────────────────────────────────
+  if (!phone) return { error: 'من فضلك أرسل رقم الأوردر أو رقم التليفون' };
 
-  let orders = data?.orders?.edges?.map(e => e.node) || [];
+  const p     = normalizePhone(phone);
+  // Egyptian local format: +201091233838 → 01091233838
+  const local = p.startsWith('+20') ? '0' + p.slice(3) : null;
+  // Without + prefix: +201091233838 → 201091233838
+  const noPlus = p.startsWith('+') ? p.slice(1) : p;
 
-  // Filter to only orders where phone actually matches (prevents Shopify returning unrelated orders)
-  if (phone) {
-    const p = normalizePhone(phone);
-    const digits10 = p.replace(/\D/g, '').slice(-10); // last 10 digits to compare
-    const digits11 = p.replace(/\D/g, '').slice(-11); // last 11 digits (covers 201XXXXXXXXX)
-    console.log('📞 Looking for phone digits:', digits10, '|', digits11);
-    orders = orders.filter(o => {
-      const phones = [
-        o.phone,
-        o.shippingAddress?.phone,
-        o.customer?.phone,
-      ].filter(Boolean);
-      console.log('📋 Order', o.name, 'phones:', phones);
-      return phones.some(x => {
-        const d = x.replace(/\D/g, '');
-        return d.slice(-10) === digits10 || d.slice(-11) === digits11;
-      });
-    });
-  }
+  console.log('📞 Phone lookup — intl:', p, '| local:', local);
+
+  // Build all the phone variants for Shopify search
+  const variants = [p, noPlus, ...(local ? [local] : [])];
+  const phoneTerms = variants.flatMap(v => [`phone:${v}`, `shipping_address_phone:${v}`]);
+  const phoneQ = phoneTerms.join(' OR ');
+
+  // Two parallel searches:
+  // 1. Direct order search (covers guest checkouts with phone on the order)
+  // 2. Customer search by phone → their orders (covers registered customers)
+  const [ordersData, customersData] = await Promise.all([
+    gql(`{
+      orders(first: 10, query: "(${phoneQ})") {
+        edges { node { ${ORDER_NODE_FIELDS} } }
+      }
+    }`),
+    gql(`{
+      customers(first: 5, query: "phone:${p}${local ? ' OR phone:' + local : ''}") {
+        edges { node {
+          orders(first: 10, sortKey: CREATED_AT, reverse: true) {
+            edges { node { ${ORDER_NODE_FIELDS} } }
+          }
+        }}
+      }
+    }`),
+  ]);
+
+  const fromOrders    = (ordersData?.orders?.edges || []).map(e => e.node);
+  const fromCustomers = (customersData?.customers?.edges || [])
+    .flatMap(c => (c.node.orders?.edges || []).map(o => o.node));
+
+  console.log('📦 From order search:', fromOrders.map(o => o.name));
+  console.log('👤 From customer search:', fromCustomers.map(o => o.name));
+
+  // Merge, deduplicate by order name, filter voided
+  const seen = new Set();
+  let orders = [...fromOrders, ...fromCustomers].filter(o => {
+    if (seen.has(o.name) || o.displayFinancialStatus === 'VOIDED') return false;
+    seen.add(o.name);
+    return true;
+  });
+
+  // Client-side phone filter — last-10-digits comparison
+  const digits10 = p.replace(/\D/g, '').slice(-10);
+  orders = orders.filter(o => {
+    const phones = [o.phone, o.shippingAddress?.phone, o.customer?.phone].filter(Boolean);
+    console.log('📋 Order', o.name, 'phones:', phones);
+    return phones.some(x => x.replace(/\D/g, '').slice(-10) === digits10);
+  });
+
   if (orders.length === 0) {
     return {
       found: false,
@@ -121,29 +177,7 @@ export async function lookupOrder({ order_number, phone }) {
     };
   }
 
-  return orders.map(o => {
-    const fulfillment = o.fulfillments?.[0];
-    const tracking    = fulfillment?.trackingInfo?.[0]?.number;
-    const delivStatus = fulfillment?.displayStatus;
-    const isConfirmed = o.tags?.includes('تم تأكيد الطلب');
-
-    return {
-      found: true,
-      order:          o.name,
-      date:           new Date(o.createdAt).toLocaleDateString('ar-EG', { year:'numeric', month:'long', day:'numeric' }),
-      total:          `${parseFloat(o.totalPriceSet.shopMoney.amount).toFixed(0)} جنيه`,
-      confirmed:      isConfirmed ? 'تم تأكيده ✅' : 'لم يتم تأكيده بعد ⏳',
-      paymentStatus:  FINANCIAL_AR[o.displayFinancialStatus] || o.displayFinancialStatus,
-      fulfillStatus:  FULFILLMENT_AR[o.displayFulfillmentStatus] || o.displayFulfillmentStatus,
-      deliveryStatus: delivStatus ? (DELIVERY_AR[delivStatus] || delivStatus) : null,
-      trackingNumber: tracking || null,
-      city:           o.shippingAddress?.city || null,
-      customer:       o.shippingAddress ? `${o.shippingAddress.firstName} ${o.shippingAddress.lastName}`.trim() : null,
-      items:          o.lineItems.edges.map(e =>
-        `• ${e.node.title}${e.node.variantTitle ? ' - ' + e.node.variantTitle : ''} (${e.node.quantity} قطعة)`
-      ),
-    };
-  });
+  return orders.map(formatOrderNode);
 }
 
 export async function searchProducts({ query }) {
